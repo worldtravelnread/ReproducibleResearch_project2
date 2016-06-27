@@ -1,0 +1,1161 @@
+---
+title: "Population Health and Economic Effects of Severe Weather Events: 1950 - 2011"
+author: "Sharon Francisco"
+date: "June 12, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+This report identifies the weather events from 1950 to November 2011 that are most harmful with respect to population health and which have the greatest economic consequences. My hypothesis is that *TORNADO*s will be among the weather events with the greatest impacts because it is the one event that has been recorded since 1950. To investigate this hyptohesis, the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database was used. From this data, I determined that *TORNADO*s were the most harmful to population health by a significant amount, followed by *HEAT*, *THUNDERSTORM/WIND*, *FLOOD*, AND *LIGHTNING*. *FLOOD*s had the greatest economic consequences, followed by *HURRICANE/TYPHOON*, *TORNADO*, *STORM SURGE/TIDE*, and *HAIL*. *TORNADO* and *FLOOD* were both in the top five events with the greatest health and economic impacts. 
+
+
+## Installing Packages and Loading Libraries 
+The packages used in the analysis are installed below.
+
+```{r installAndLoadPackages}
+if(!require(dplyr, quietly = TRUE)) install.packages("dplyr")
+library(dplyr)
+if(!require(ggplot2, quietly = TRUE)) install.packages("ggplot2")
+library(ggplot2)
+```
+
+
+## Downloading, Loading, and Processing the Raw Data
+
+The U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database was provided via the course web site: [Storm Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+
+The following documents provide information about how some of the variables are constructed/defined:
+
+- National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+- National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+
+From the project instructions: The events in the database start in the year 1950 and end in November 2011. In the earlier years of the database there are generally fewer events recorded, most likely due to a lack of good records. More recent years should be considered more complete.
+
+Additional information about the data base was found [here](https://www.ncdc.noaa.gov/stormevents/details.jsp):
+
+- Tornado: From 1950 through 1954, only tornado events were recorded.
+
+- Tornado, Thunderstorm Wind and Hail: From 1955 through 1992, only tornado, thunderstorm wind and hail events were keyed from paper publications into digital data. From 1993 to 1995, only tornado, thunderstorm wind and hail events have been extracted from the [Unformatted Text Files](https://www.ncdc.noaa.gov/stormevents/details.jsp?type=collection).
+
+- All Event Types (48 from Directive 10-1605): from 1996 to present, 48 event types are recorded as defined in [NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf)
+
+Now I will download the relevant files.
+
+```{r downloadFiles, cache = TRUE}
+dataFileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+variableFileUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf"
+faqUrl <- "https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf"
+
+download.file(dataFileUrl, "StormData.csv.bz2")
+download.file(variableFileUrl, "variable_info.pdf")
+download.file(faqUrl, "faq.pdf")
+
+dateDownloaded <- date()
+```
+
+The data set was downloaded on `r dateDownloaded`.
+
+The data is comma-delimited, and missing values are coded as blank fields. The data set is read into R:
+
+```{r readData, cache = TRUE}
+stormData <- read.csv("StormData.csv.bz2", header = TRUE, na.strings = "")
+dim(stormData)
+```
+
+There are 902,297 observations and 37 variables in the data set.
+
+
+The first 10 rows of the data set are checked, and a summary of the data set is obtained:
+
+```{r checkFirst10Rows}
+head(stormData, 10)
+summary(stormData)
+```
+
+The summary data indicates possible data manipulations to be done prior to conducting the analysis:
+
+- **EVTYPE**: It appears that data validation was not enforced because the event types listed are inconsistent. For example, TSTM WIND and THUNDERSTORM WIND are likely the same event type, but were entered in differently. I will look at the other factor levels to see if event names appear to be entered inconsistently.
+
+- Property Damage (**PROPDMG** and **PROPDMGEXP**) and Crop Damage (**CROPDMG** and **CROPDMGEXP**) are broken out into two variables: the first one is an amount, the second looks like it may be the exponent (i.e., K or k = 1000, M = 1000000). A calculated field for both types of damage will need to be created so that calculations can be performed with the extended amounts. 
+
+
+The data set is converted to a data frame table:
+
+```{r convertToDfTbl}
+stormDataDfTbl <- tbl_df(stormData)
+```
+
+Below are the levels of the **EVTYPE** variable:
+
+```{r levelsEVTYPE}
+origEVTYPE <- levels(stormDataDfTbl$EVTYPE)
+origEVTYPE
+```
+
+There are `r length(origEVTYPE)` different factor levels in the original data.
+
+It is evident that events of the same type were entered into the data set in different ways and will need to be cleaned prior to the analysis. 
+
+I wrote a function to show the levels of a factor variable. I'll be using this to check on the **EVTYPE**s to see the effects of my data cleaning.
+
+```{r getFactorLevelsFunction}
+getFactorLevels <- function(myVector) {
+        myFactor <- as.factor(myVector)
+        numberOfLevels <- length(levels(myFactor))
+        numberOfLevels <- paste("# of levels in the factor =  ", 
+                                numberOfLevels, sep = "")
+        print(c(numberOfLevels, levels(myFactor)))
+}
+```
+
+I started with the low-hanging fruit (i.e., the easy steps). 
+
+First, the leading whitespace was removed.
+
+```{r removeLeadWS}
+cleanEVTYPE <- stormDataDfTbl$EVTYPE
+cleanEVTYPE <- trimws(cleanEVTYPE, which = "left")
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+```
+
+There are now `r length(cleanEVTYPEFact) - 1` factor levels.
+
+Next, the **EVTYPE**s are converted to uppercase.
+
+```{r convertEventsToUppercase}
+cleanEVTYPE <- toupper(cleanEVTYPE)
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+```
+
+There are now `r length(cleanEVTYPEFact) - 1` factor levels.
+
+I'll get back to cleaning **EVTYPE**s a little later, but next I want to examine the **PROPDMGEXP** and **CROPDMGEXP** variables. I'd like to see what the damage amounts are by the **EVTYPE**s to help make cleaning decisions.
+
+Below are the levels of the **PROPDMGEXP** variable:
+
+```{r levelsPROPDMGEXP}
+print(levels(stormDataDfTbl$PROPDMGEXP))
+```
+
+Below are the levels of the **CROPDMGEXP** variable:
+
+```{r levelsCROPDMGEXP}
+print(levels(stormDataDfTbl$CROPDMGEXP))
+```
+
+I'll start by converting the **PROPDMGEXP** and **CROPDMGEXP** values to uppercase.
+
+```{r convertDMGEXPsToUppercase}
+cleanPROPDMGEXP <- toupper(stormDataDfTbl$PROPDMGEXP)
+cleanCROPDMGEXP <- toupper(stormDataDfTbl$CROPDMGEXP)
+cleanPROPDMGEXPFact <- getFactorLevels(cleanPROPDMGEXP)
+cleanCROPDMGEXPFact <- getFactorLevels(cleanCROPDMGEXP)
+
+```
+
+I wrote a function to find and replace character strings to facilitate cleaning the data:
+
+```{r cleanUpFunction}
+cleanUp <- function(find, replace, data) {
+        beforePattern <- paste("(^|[A-z]|[^A-z])+", find, 
+                               sep = "")
+        afterPattern <- paste(find, "($|[A-z]|[^A-z])+", 
+                              sep = "")
+        data <- gsub(pattern = beforePattern, 
+                     replacement = replace, x = data)
+        data <- gsub(pattern = afterPattern, 
+                     replacement = replace, x = data)
+}
+
+```
+
+The **cleanUp** function makes it easy to see the event I am searching for and the event I want to replace it with.
+
+I'm going to assume that the **EXP** in **PROPDMGEXP** and **CROPDMGEXP** stands for exponent.
+
+I'll start by converting the letters to numbers. Note: I'll convert to numbers that are of class character to match the other numbers then convert to numeric later.
+
+```{r convertToNumber}
+cleanPROPDMGEXP <- cleanUp("H", "2", cleanPROPDMGEXP)
+cleanPROPDMGEXP <- cleanUp("K", "3", cleanPROPDMGEXP)
+cleanPROPDMGEXP <- cleanUp("M", "6", cleanPROPDMGEXP)
+cleanPROPDMGEXP <- cleanUp("B", "9", cleanPROPDMGEXP)
+cleanPROPDMGEXPFact <- getFactorLevels(cleanPROPDMGEXP)
+
+cleanCROPDMGEXP <- cleanUp("K", "3", cleanCROPDMGEXP)
+cleanCROPDMGEXP <- cleanUp("M", "6", cleanCROPDMGEXP)
+cleanCROPDMGEXP <- cleanUp("B", "9", cleanCROPDMGEXP)
+cleanCROPDMGEXPFact <- getFactorLevels(cleanCROPDMGEXP)
+
+```
+
+I wrote another function to replace the symbols (e.g., *?*, *+*) with the NA logical constant.
+
+```{r convertSymbolsFunction}
+symbolToNA <- function(symbol, targetData) {
+        indVectorInt <- grep(pattern = symbol, x = targetData, 
+                             value = FALSE)
+        for(i in seq_along(indVectorInt)) {
+                is.na(targetData[indVectorInt[i]]) <- TRUE
+        }
+        targetData
+}
+
+```
+
+I'll start with the *?* in **cleanCROPDMGEXP**. The *?* is a metacharacter so I need to use "\\\\" before it to "escape it".
+
+```{r convertCROP}
+cleanCROPDMGEXP <- symbolToNA("\\?", cleanCROPDMGEXP)
+cleanCROPDMGEXPFact <- getFactorLevels(cleanCROPDMGEXP)
+```
+
+Next, I'll convert the *-*, *?*, and *+* in **cleanPROPDMGEXP**.
+
+```{r convertPROP}
+cleanPROPDMGEXP <- symbolToNA("-", cleanPROPDMGEXP)
+cleanPROPDMGEXP <- symbolToNA("\\?", cleanPROPDMGEXP)
+cleanPROPDMGEXP <- symbolToNA("\\+", cleanPROPDMGEXP)
+cleanPROPDMGEXPFact <- getFactorLevels(cleanPROPDMGEXP)
+```
+
+Now I'll convert the **PROPDMGEXP** and **CROPDMGEXP** data to numeric:
+
+```{r convertToNumeric}
+cleanPROPDMGEXP <- as.numeric(cleanPROPDMGEXP)
+cleanCROPDMGEXP <- as.numeric(cleanCROPDMGEXP)
+```
+
+I'll calculate the extended damage amounts (e.g., **stormDataDfTbl$PROPDMG * 10 ^ cleanPROPDMGEXP**).
+
+```{r calcDMG}
+calcPROPDMG <- stormDataDfTbl$PROPDMG * 10 ^ cleanPROPDMGEXP
+calcCROPDMG <- stormDataDfTbl$CROPDMG * 10 ^ cleanCROPDMGEXP
+head(calcPROPDMG)
+head(calcCROPDMG)
+```
+
+Below is a function to convert the *NA*s in the calculated damage vectors to *0*.
+
+```{r convertNAs, cache = TRUE}
+convertNAto0 <- function(dataSet) {
+        for(j in seq_along(dataSet)) {
+                if(is.na(dataSet[j])) {
+                        dataSet[j] <- 0
+                }
+        }
+        dataSet
+}
+
+```
+
+Use the function on the **calcPROPDMG** and **calcCROPDMG** vectors.
+
+```{r convertCalcVectors}
+
+calcPROPDMG <- convertNAto0(calcPROPDMG)
+calcCROPDMG <- convertNAto0(calcCROPDMG)
+
+print(head(calcCROPDMG))
+```
+
+Calculate the total damage (i.e., property + crop).
+
+```{r totalDMG}
+totalDMG <- calcPROPDMG + calcCROPDMG
+head(totalDMG)
+```
+
+Calculate the total health impacts (i.e., fatalities + injuries).
+
+```{r totalHealth}
+totalHealth <- stormDataDfTbl$FATALITIES +
+        stormDataDfTbl$INJURIES
+head(totalHealth)
+```
+
+Add the new variables to the original storm data frame table.
+
+```{r combineVariables}
+newStormDataDfTbl <- cbind(stormDataDfTbl, cleanEVTYPE, 
+                           cleanPROPDMGEXP, cleanCROPDMGEXP,
+                           calcPROPDMG, calcCROPDMG, totalDMG,
+                           totalHealth)
+summary(newStormDataDfTbl)
+```
+
+I'll group the data by **cleanEVTYPE** and summarize it.
+
+The preliminary result of the events that have the greatest health impact is below:
+
+```{r healthByCleanEVTYPE}
+healthByCleanEVTYPE <- newStormDataDfTbl %>%
+        group_by(cleanEVTYPE) %>%
+        summarize(count = n(), DMG = sum(totalDMG), HEALTH =
+                          sum(totalHealth),
+                  totalFatalities = sum(FATALITIES),
+                  totalInjuries = sum(INJURIES)) %>%
+        arrange(desc(HEALTH))
+head(healthByCleanEVTYPE, 10)
+
+```
+
+This is a preliminary result of the events that have the greatest economic impact: 
+
+
+```{r econByCleanEVTYPE}
+econByCleanEVTYPE <- newStormDataDfTbl %>%
+        group_by(cleanEVTYPE) %>%
+        summarize(count = n(), DMG = sum(totalDMG), HEALTH =
+                          sum(totalHealth),
+                  totalFatalities = sum(FATALITIES),
+                  totalInjuries = sum(INJURIES)) %>%
+        arrange(desc(DMG))
+head(econByCleanEVTYPE, 10)
+```
+
+
+I'll refine the results by doing more cleaning of the **EVTYPE**s.
+
+I'll use the [NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf) as a reference for cleaning the data, along with the preliminary results. I'll use the **EVTYPE** values to decide how to clean the data. For example, I'll try to consolidate related events into an **EVTYPE** listed in the NWS Directive. See the process for cleaning the *FLOOD* **EVTYPE**s below.
+
+Some of the **EVTYPE**s don't fit with the events listed in the NWS Directive, so I've consolidated similar events into one.
+
+
+The **econByCleanEVTYPE** data set shows three types of *FLOOD* events. I need to check what other *FLOOD* events are in the **cleanEVTYPE** vector.
+
+Before I do that, I'll write a function to search for specific **EVTYPE**s.
+
+```{r searchFunction}
+mySearch <- function(find, where) {
+        target <- paste("(^|[A-z]|[^A-z])+", find, "|", find, 
+                        "($|[A-z]|[^A-z])+", sep = "")
+        result <- grep(pattern = target, x = where, value = TRUE)
+        resultFact <- getFactorLevels(result)
+}
+
+```
+
+Now I'll use the new function to look at all the events with *FLOOD* in them.
+
+```{r search4Flood}
+mySearch("FLOOD", cleanEVTYPE)
+```
+
+
+[NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf) lists the following four *FLOOD*-related events:
+
+- Coastal Flood
+- Flash Flood
+- Flood
+- Lakeshore Flood
+
+I will consolidate the *FLOOD* events into the four listed in [NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf), but I have to be careful. I can't just use the **cleanUp** function.
+
+
+The *COASTAL FLOOD* events are consolidated as *COASTAL flood*, which will help exclude it from the cleanup of the plain *FLOOD* events. 
+
+```{r cleanCoastalFlood}
+mySearch("COASTAL", cleanEVTYPE)
+```
+
+Now I'll clean *COASTAL FLOOD*.
+
+```{r cleanCoastalFlood2}
+
+cleanEVTYPE <- cleanUp("COASTAL EROSION", "COASTAL flood", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL/TIDAL FLOOD", "COASTAL flood",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTALFLOOD", "COASTAL flood", 
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("CSTL FLOOD", "COASTAL flood", 
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL  FLOODING", "COASTAL flood",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TIDAL FLOOD", "COASTAL flood",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL FLOOD", "COASTAL flood",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL flood", "COASTAL flood",
+                       cleanEVTYPE)
+mySearch("COASTAL", cleanEVTYPE)
+
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+```
+
+Next, the *FLASH FLOOD* events are consolidated as *FLASH flood*.
+
+First, ensure all *FLASH*-related events are *FLASH FLOOD* types. Then consolidate the *FLASH*-related events.
+
+```{r cleanFlashFlood}
+mySearch("FLASH", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("FLASH", "FLASH flood", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FLASH flood", "FLASH flood",
+                       cleanEVTYPE)
+mySearch("FLASH", cleanEVTYPE)
+
+```
+
+Now, the *LAKESHORE* events are examined.
+
+```{r cleanLakeshoreFlood}
+mySearch("LAKESHORE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LAKESHORE", "LAKESHORE flood",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LAKESHORE flood", "LAKESHORE flood",
+                       cleanEVTYPE)
+mySearch("LAKESHORE", cleanEVTYPE)
+```
+
+
+Finally, the remaining *FLOOD*-type events need to be consolidated.
+
+```{r cleanFlood}
+mySearch("FLOOD", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DROWNING", "FLOOD", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FLOOD", "FLOOD", cleanEVTYPE)
+mySearch("FLOOD", cleanEVTYPE)
+
+```
+
+Now the other three *FLOOD* types are capitalized:
+
+```{r capitalizeFlood}
+cleanEVTYPE <- cleanUp("COASTAL flood", "COASTAL FLOOD",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FLASH flood", "FLASH FLOOD",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LAKESHORE flood", "LAKESHORE FLOOD",
+                       cleanEVTYPE)
+
+mySearch("FLOOD", cleanEVTYPE)
+mySearch("COASTAL", cleanEVTYPE)
+```
+
+I'll check the **EVTYPE**s again to make sure the changes were made.
+
+```{r checkEVTYPEsAgain}
+
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+
+```
+
+I'll write a function to update the summaries of the health and economic impacts of the **EVTYPE**s.
+
+```{r updateByCleanEVTYPEFunction}
+updtByCleanEVTYPE <- function(issue) {
+        updatedByCleanEVTYPE <- newStormDataDfTbl %>%
+                select(-cleanEVTYPE) %>%
+                cbind(cleanEVTYPE) %>%
+                group_by(cleanEVTYPE) %>%
+                summarize(count = n(), DMG =
+                                  sum(totalDMG), 
+                          HEALTH = sum(totalHealth),
+                          totalFatalities =
+                                  sum(FATALITIES),
+                          totalInjuries = sum(INJURIES))
+        if(issue == "health") {
+                updatedByCleanEVTYPE <- updatedByCleanEVTYPE %>%
+                        arrange(desc(HEALTH))
+        }
+        else if(issue == "economic") {
+                updatedByCleanEVTYPE <- updatedByCleanEVTYPE %>%
+                        arrange(desc(DMG))
+        }
+        else {
+                print("Argument needs to be either 'health' or
+                      'economic'.")
+        }
+        print(head(updatedByCleanEVTYPE, 10))
+}
+
+```
+
+The health impacts look like this now:
+
+```{r updateHealth}
+healthUpdt <- updtByCleanEVTYPE("health")
+```
+
+The economic impacts look like this:
+
+```{r updateEconomic}
+econUpdt <- updtByCleanEVTYPE("economic")
+```
+
+Next, I'll clean up the **TORNADO** events.
+
+```{r cleanTornado}
+mySearch("TORNADO", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FUNNEL", "TORNADO", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TORNADO", "TORNADO", cleanEVTYPE)
+mySearch("TORNADO", cleanEVTYPE)
+```
+
+I'll see how many **HEAT** events are in the data set.
+
+```{r findHeat}
+mySearch("HEAT", cleanEVTYPE)
+```
+
+I'll clean the *HEAT* events like I did the *FLOOD* events.
+
+```{r cleanHeat}
+cleanEVTYPE <- cleanUp("EXTREME HEAT", "EXCESSIVE heat",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE HEAT", "EXCESSIVE heat",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAT", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE heat", "EXCESSIVE HEAT",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE HEAT", "EXCESSIVE HEAT",
+                       cleanEVTYPE)
+mySearch("HEAT", cleanEVTYPE)
+```
+
+Next up is *LIGHTNING*.
+
+```{r cleanLightning}
+mySearch("LIGHTNING", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LIGHTNING", "LIGHTNING", cleanEVTYPE)
+mySearch("LIGHTNING", cleanEVTYPE)
+```
+
+Now I'll clean up *ICE STORM*.
+
+```{r cleanIceStorm}
+mySearch("ICE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ICE", "ICE STORM", cleanEVTYPE)
+mySearch("ICE", cleanEVTYPE)
+
+```
+
+Next is *WINTER STORM* and *WINTER WEATHER*.
+
+```{r cleanWinterStorm}
+mySearch("WINTER", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WINTER STORM", "winter storm",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("winter storm", "winter storm",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WINTER", "winter weather", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WINTRY MIX", "winter weather", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("winter weather", "winter weather",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("winter storm", "WINTER STORM",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("winter weather", "WINTER WEATHER",
+                       cleanEVTYPE)
+mySearch("WINTER", cleanEVTYPE)
+mySearch("WEATHER", cleanEVTYPE)
+
+```
+
+Now I'll clean the *HURRICANE* events.
+
+```{r cleanHurricane}
+mySearch("TYPHOON", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TYPHOON", "HURRICANE/TYPHOON", cleanEVTYPE)
+mySearch("HURRICANE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HURRICANE", "HURRICANE/TYPHOON",
+                       cleanEVTYPE)
+mySearch("HURRICANE", cleanEVTYPE)
+```
+
+Next is *STORM SURGE/TIDE*.
+
+```{r cleanStormSurge}
+mySearch("SURGE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("STORM SURGE", "STORM SURGE/TIDE",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL SURGE", "STORM SURGE/TIDE",
+                       cleanEVTYPE)
+mySearch("SURGE", cleanEVTYPE)
+```
+
+
+Now I'll clean up *HAIL*.
+```{r cleanHail}
+mySearch("HAIL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MARINE HAIL", "marine hail",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("marine hail", "marine hail",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HAIL", "HAIL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("marine hail", "MARINE HAIL",
+                       cleanEVTYPE)
+mySearch("HAIL", cleanEVTYPE)
+
+```
+
+
+Now I'll clean up *TROPICAL STORM*.
+
+```{r cleanTropicalStorm}
+mySearch("TROPICAL STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL STORM", "TROPICAL STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTALSTORM", "TROPICAL STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TROPICAL STORM", "TROPICAL STORM",
+                       cleanEVTYPE)
+mySearch("TROPICAL STORM", cleanEVTYPE)
+```
+
+Below is an updated summary of the health and economic impacts of the **EVTYPE**s.
+
+```{r updateImpacts}
+updtByCleanEVTYPE("health")
+updtByCleanEVTYPE("economic")
+```
+
+
+Next, let's see the remaining **EVTYPE**s.
+
+```{r getEVTYPEs2}
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+```
+
+
+
+Here I'll clean the *FREEZE* events.
+
+```{r cleanFreeze}
+mySearch("FREEZE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FROST", "freeze", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FREEZE", "freeze", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("freeze", "FROST/FREEZE", cleanEVTYPE)
+mySearch("FREEZE", cleanEVTYPE)
+```
+
+Now I'll clean *SURF* events.
+
+```{r cleansurf}
+mySearch("SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RIP", "high surf", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SWELL", "high surf", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SURF", "high surf", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("BLOW-OUT TIDE", "high surf", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("high surf", "high surf", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("high surf", "HIGH SURF", cleanEVTYPE)
+mySearch("SURF", cleanEVTYPE)
+mySearch("HEAVY SURF", cleanEVTYPE)
+```
+
+
+I'll start cleaning the *SNOW*-related events. 
+
+```{r cleanSnow}
+mySearch("SNOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("BLIZZARD", "BLIZZARD", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("HEAVY WET SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD MAY SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOWFALL RECORD", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOWSTORM", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW AND COLD", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW AND WIND", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW/BLOWING SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW/COLD", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW/RAIN", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW\\\\COLD", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("THUNDERSNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW/HEAVY SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW AND HEAVY SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAVY SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("heavy snow", "heavy snow", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("HEAVY LAKE SNOW", "lake-effect snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LAKE EFFECT SNOW", "lake-effect snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LAKE-EFFECT SNOW", "lake-effect snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("lake-effect snow", "lake-effect snow", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("SNOW SQUALL", "WINTER WEATHER", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WINTER WEATHER", "WINTER WEATHER",
+                       cleanEVTYPE)
+
+mySearch("SNOW", cleanEVTYPE)
+
+```
+
+I'll finish cleaning the *SNOW* events later.
+
+Next, I'll clean the *FREEZ*  and *SLEET* events.
+
+```{r cleanFreez}
+mySearch("FREEZI", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FREEZING FOG", "freezing fog", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FREEZING", "SLEET", cleanEVTYPE)
+mySearch("FOG", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FOG", "DENSE FOG", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DENSE FOG", "DENSE FOG", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("freezing fog", "FREEZING FOG", cleanEVTYPE)
+mySearch("FOG", cleanEVTYPE)
+mySearch("FREEZI", cleanEVTYPE)
+mySearch("SLEET", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SLEET", "SLEET", cleanEVTYPE)
+mySearch("SLEET", cleanEVTYPE)
+```
+
+Next, let's see the remaining **EVTYPE**s.
+
+```{r getEVTYPEsAgain}
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+```
+
+
+I'll see how many *WIND* events are in the data set.
+
+```{r searchWind}
+mySearch("WIND", cleanEVTYPE)
+```
+
+[NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf) lists the following *WIND*-related events:
+
+- Cold/Wind Chill
+- Extreme Cold/Wind Chill
+- High Wind
+- Marine High Wind
+- Marine Strong Wind
+- Marine Thunderstorm Wind
+- Strong Wind
+- Thunderstorm Wind
+
+I'll start cleaning up the *WINDS*.
+
+```{r cleanWinds}
+cleanEVTYPE <- cleanUp("BITTER", "extreme cold1/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTREME WIND", "extreme cold1/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTREME COLD/wind chill", 
+                       "extreme cold1/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("extreme cold1/wind chill", 
+                       "extreme cold1/wind chill", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("COLD/WINDS", "cold/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WIND CHILL", "cold/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("cold/wind chill", "cold/wind chill", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("MARINE TSTM WIND", "MARINE thunderstorm wind",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WAKE LOW WIND", "MARINE high wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WIND AND WAVE", "MARINE high wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MARINE STRONG WIND", "MARINE strong wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MARINE strong wind", "MARINE strong wind", cleanEVTYPE)
+
+mySearch("THUNDER", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("BURST", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("GUSTNADO", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TSTM", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("THUNDER", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("THUDERSTORM", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("THUNDEERSTORM", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("THUNDESTORM", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("THUNERSTORM", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TUNDERSTORM", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("STORM FORCE", "thunderstorm wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("thunderstorm wind", "thunderstorm wind", cleanEVTYPE)
+
+mySearch("GUSTY", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("GUSTY", "HIGH wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH  WIND", "HIGH wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WIND STORM", "HIGH wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WIND GUST", "HIGH wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH WIND", "HIGH wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH wind", "HIGH wind", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("NON-SEVERE WIND", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("GRADIENT WIND", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WHIRLWIND", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WIND ADVISORY", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WIND DAMAGE", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WINDS", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WND", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("STRONG WIND", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("STRONG wind", "STRONG wind", cleanEVTYPE)
+
+mySearch("WIND", cleanEVTYPE)
+mySearch("wind", cleanEVTYPE)
+
+```
+
+I'll come back to *WIND* in a little bit.
+
+Now I'll look at the *COLD* events.
+
+```{r cleanCold}
+mySearch("COLD", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("EXCESSIVE COLD", "extreme cold1/wind
+                       chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTENDED COLD", "extreme cold1/wind
+                       chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTREME COLD", "extreme cold1/wind
+                       chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTREME/RECORD COLD", "extreme
+                       cold1/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD COLD", "extreme cold1/wind
+                       chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD  COLD", "extreme cold1/wind
+                       chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SEVERE COLD", "extreme cold1/wind
+                       chill",cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNUSUALLY COLD", "extreme cold1/wind
+                       chill",cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTREME COLD/wind chill", 
+                       "extreme cold1/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("extreme", 
+                       "extreme cold1/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD AIR", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD AND", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD TEMPERATURE", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD WAVE", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD WEATHER", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("PROLONG COLD", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNSEASONABLE COLD", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNSEASONABLY COLD", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD", "cold/wind chill", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("cold/wind chill", "cold/wind chill",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("extreme cold1/wind chill", 
+                       "extreme cold1/wind chill", cleanEVTYPE)
+
+mySearch("COLD", cleanEVTYPE)
+mySearch("cold", cleanEVTYPE)
+```
+
+I'll look at *RAIN* events here.
+
+```{r cleanRain}
+mySearch("RAIN", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("EARLY RAIN", "early rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MONTHLY RAINFALL", "monthly rainfall",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD LOW RAIN", "record low rainfall",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ABNORMALLY WET", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE PRECIPITATION", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE WETNESS", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXTREMELY WET", "heavy rain", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("HEAVY RAIN", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RAIN", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAVY PRECIP", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAVY SHOWER", "heavy rain", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("heavy rain", "heavy rain", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("heavy rain", "HEAVY RAIN", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("early rain", "EARLY RAIN", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("monthly rainfall", "MONTHLY RAINFALL",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("record low rainfall", "RECORD LOW RAIN",
+                       cleanEVTYPE)
+
+mySearch("RAIN", cleanEVTYPE)
+```
+
+
+
+Next, I'll finish cleaning *SNOW*. Some of the events don't fit the ones listed in [NWS Directive 10-1605](https://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf) so I consolidated them into separate **EVTYPE**s, like *EARLY SNOW*.
+
+```{r cleanSnow2}
+mySearch("SNOW", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("EARLY SNOW", "early snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FIRST SNOW", "early snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("early snow", "early snow", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("LATE SEASON SNOW", "late snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LATE-SEASON SNOW", "late snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LATE SNOW", "late snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNUSUALLY LATE SNOW", "late snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("late snow", "late snow", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("ACCUMULATED SNOW", "snow accumulation",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DRIFTING SNOW", "snow accumulation",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MONTHLY SNOW", "snow accumulation",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MOUNTAIN SNOW", "snow accumulation",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SEASONAL SNOW", "snow accumulation",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW ACCUMULATION", "snow accumulation",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("snow accumulation", "snow accumulation",
+                       cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("LIGHT SNOW", "light snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW SHOWERS", "light snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("light snow", "light snow", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("MODERATE SNOW", "moderate snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("moderate snow", "moderate snow",
+                       cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("BLOWING SNOW", "blowing snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LACK OF SNOW", "lack of snow",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW ADVISORY", "snow advisory",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WET SNOW", "wet snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SNOW", "heavy snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("blowing snow", "BLOWING SNOW",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("early snow", "EARLY SNOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("lack of snow", "LACK OF SNOW",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("lake-effect snow", "LAKE-EFFECT SNOW",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("late snow", "LATE SNOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("light snow", "LIGHT SNOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("moderate snow", "MODERATE SNOW",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("snow accumulation", "SNOW ACCUMULATION",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("snow advisory", "SNOW ADVISORY",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("wet snow", "WET SNOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("heavy snow", "HEAVY SNOW", cleanEVTYPE)
+
+mySearch("SNOW", cleanEVTYPE)
+```
+
+Back to *WIND*.
+
+```{r cleanWind2}
+mySearch("WIND", cleanEVTYPE)
+mySearch("wind", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("WIND", "STRONG wind", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("STRONG wind", "STRONG WIND", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH wind", "HIGH WIND", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MARINE high wind", "MARINE HIGH WIND", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MARINE strong wind", "MARINE STRONG WIND", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("thunderstorm wind", "THUNDERSTORM WIND", cleanEVTYPE)
+
+cleanEVTYPE <- cleanUp("cold/wind chill", "COLD/WIND CHILL",cleanEVTYPE)
+cleanEVTYPE <- cleanUp("extreme cold1/wind chill", "EXTREME COLD/WIND CHILL",
+                       cleanEVTYPE)
+
+mySearch("wind", cleanEVTYPE)
+mySearch("WIND", cleanEVTYPE)
+
+```
+
+Next I'll consolidate all the *SUMMARY* entries.
+
+```{r cleanSummary}
+mySearch("SUMMARY", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SUMMARY", "summary", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("summary", "summary", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("summary", "SUMMARY", cleanEVTYPE)
+mySearch("SUMMARY", cleanEVTYPE)
+```
+
+Here I'll clean up the *FIRE* events.
+
+```{r cleanFire}
+mySearch("FIRE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WILDFIRE", "wildfire", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FIRE", "wildfire", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("wildfire", "wildfire", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("wildfire", "WILDFIRE", cleanEVTYPE)
+mySearch("FIRE", cleanEVTYPE)
+```
+
+Now I'll clean the *SMOKE* events.
+
+```{r cleanSmoke}
+mySearch("SMOKE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SMOKE", "DENSE SMOKE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DENSE SMOKE", "DENSE SMOKE", cleanEVTYPE)
+
+mySearch("SMOKE", cleanEVTYPE)
+```
+
+Next is *DROUGHT*.
+
+```{r cleanDrought}
+mySearch("DROUGHT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DRIEST MONTH", "DROUGHT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DRY", "DROUGHT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DROUGHT", "DROUGHT", cleanEVTYPE)
+mySearch("DROUGHT", cleanEVTYPE)
+mySearch("DRY", cleanEVTYPE)
+```
+
+I'll clean the *PRECIPITATION* events here.
+
+```{r cleanPrecip}
+mySearch("PRECIP", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("PRECIP", "PRECIPITATION", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("PRECIPITATION", "PRECIPITATION", cleanEVTYPE)
+mySearch("PRECIP", cleanEVTYPE)
+```
+
+
+Based on the remaining **EVTYPE**s, I'll do some more cleaning.
+
+```{r cleanMore}
+cleanEVTYPE <- cleanUp("ABNORMAL WARMTH", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ABNORMALLY DRY", "DROUGHT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("AVALANCE", "AVALANCHE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("BEACH", "COASTAL FLOOD", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DAM FAILURE", "DAM BREAK", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DUST DEVEL", "dust devil", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DUST DEVIL", "dust devil", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("dust devil", "dust devil", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("dust devil", "DUST DEVIL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DUSTSTORM", "DUST STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAVY MIX", "WINTER WEATHER", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAVY SEAS", "HIGH SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH SEAS", "HIGH SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH TEMPERATURE RECORD", "EXCESSIVE HEAT",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH TIDES", "HIGH SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH WATER", "flood", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HIGH WAVES", "HIGH SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HOT", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAT", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HYPOTHERMIA", "HYPOTHERMIA/EXPOSURE", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ICY ROADS", "ICE STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LANDSLIDE", "DEBRIS FLOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LANDSLUMP", "DEBRIS FLOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LANDSPOUT", "TORNADO", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LIGHTING", "LIGHTNING", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LIGNTNING", "LIGHTNING", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LOW TEMPERATURE", "COLD/WIND CHILL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("LOW TEMPERATURE RECORD", " EXTREME COLD/WIND CHILL",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MARINE MISHAP", "MARINE ACCIDENT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("MUD", "DEBRIS FLOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ROCK SLIDE", "DEBRIS FLOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("DEBRIS FLOW", "DEBRIS FLOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("PROLONG WARMTH", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RAPIDLY RISING WATER", "flood", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD COOL", "EXTREME COLD/WIND CHILL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD LOW RAINFALL", "record low rainfall",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD LOW", "EXTREME COLD/WIND CHILL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("record low rainfall", "RECORD LOW RAINFALL",
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD HIGH", "EXCESSIVE HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD TEMPERATURE", "EXCESSIVE HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("EXCESSIVE HEAT", "EXCESSIVE HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("RECORD WARM", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAT", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FLOYD", "HURRICANE/TYPHOON", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("GLAZE", "FREEZING FOG", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ROGUE WAVE", "HIGH SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("ROUGH SEAS", "HIGH SURF", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SAHARAN DUST", "DUST STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SMALL STREAM", "SMALL STREAM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("SMALL STREAM", "SMALL STREAM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("FLD", "flood", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("TORNDAO", "TORNADO", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNSEASONABLY COOL", "COLD/WIND CHILL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNSEASONAL", "COLD/WIND CHILL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNSEASONABLY WARM", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNUSUAL", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("URBAN", "URBAN/SMALL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("URBAN/SMALL", "URBAN/SMALL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("VERY WARM", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("VO", "VOLCANIC ASH", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("VOLCANIC ASH", "VOLCANIC ASH", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WALL CLOUD", "TORNADO", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WARM", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WATER", "WATERSPOUT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WAYTERSPOUT", "WATERSPOUT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WATERSPOUT", "WATERSPOUT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COLD/WIND CHILL", "COLD/WIND CHILL", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("HEAT", "HEAT", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("BLOWING DUST", "DUST STORM", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WET SNOW", "wet snow", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("WET", "UNSEASONABLY WET", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("UNSEASONABLY WET", "UNSEASONABLY WET", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("wet snow", "WET SNOW", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("COASTAL FLOOD", "COASTAL FLOOD", 
+                       cleanEVTYPE)
+cleanEVTYPE <- cleanUp("flood", "flood", cleanEVTYPE)
+cleanEVTYPE <- cleanUp("flood", "FLOOD", cleanEVTYPE)
+
+
+
+```
+
+Next, let's see the remaining **EVTYPE**s.
+
+
+```{r getEVTYPEsAgain2}
+cleanEVTYPEFact <- getFactorLevels(cleanEVTYPE)
+
+print(length(cleanEVTYPE))
+```
+
+
+There are now `r length(cleanEVTYPEFact) - 1` **EVTYPE**s in the data set. I believe the data set has been reasonably cleaned.
+
+## Results
+
+Below are the ten **EVTYPE**s with the largest health and economic impacts:
+
+```{r checkImpacts}
+healthEvents <- updtByCleanEVTYPE("health")
+economicEvents <- updtByCleanEVTYPE("economic")
+
+```
+
+Here is a plot of the top five events that are most harmful to population health:
+
+```{r plotHealth}
+health <- ggplot(head(healthEvents,5), aes(cleanEVTYPE, HEALTH))
+health <- health + geom_point() + labs(x = "Event", y = 
+                                "Number of Fatalities and Injuries", title = 
+                                "Weather Events Most Harmful to Population Health")
+print(health)
+```
+
+*TORNADO*s, with `r healthEvents[1, 5]` fatalities and `r healthEvents[1, 6]` injuries, have a significantly large impact on population health compared to the next four weather events. *HEAT*, the next weather event, resulted in `r healthEvents[2, 5]` fatalities and `r healthEvents[2, 6]` injuries. 
+
+Here is a plot of the top five events with the greatest ecconomic consequences:
+
+```{r plotEconomic}
+economic <- ggplot(head(economicEvents,5), aes(cleanEVTYPE, DMG))
+economic <- economic + geom_point() + labs(x = "Event", y = 
+                                        "Total Property & Crop Damage ($)", title =
+                                        "Weather Events with Greatest Economic Consequences")
+print(economic)
+```
+
+*FLOOD*s, with $`r economicEvents[1, 3]` in total property and crop damage, have the greatest economic impact, followed by *HURRICANE/TYPHOON*s then *TORNADO*s.
+
+Both *TORNADO* and *FLOOD* are in the top five weather events with both the greatest impact on population health and economic damage.
+
+
+
